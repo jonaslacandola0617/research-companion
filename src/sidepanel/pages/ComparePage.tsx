@@ -20,24 +20,30 @@ import {
   human,
 } from "../components/ui";
 import { comparisonRows, setComparison } from "../../services/comparison";
+
 export function ComparePage() {
   const { c, save, run } = useWorkspace();
   const [candidate, setCandidate] = useState<Candidate | null>(null);
   const [discrepancy, setDiscrepancy] = useState<Discrepancy | null>(null);
   if (!c) return null;
+
+  const rows = comparisonRows(c);
+
   return (
     <>
       <div className="page-title">
-        <span className="eyebrow">COMPARE & CORROBORATE</span>
-        <h1>Weigh the evidence.</h1>
-        <p>Record similarities, conflicts, and your assessment.</p>
+        <span className="eyebrow">COMPARE</span>
+        <h1>Keep candidates separate.</h1>
+        <p>Compare one identity at a time, record conflicts, and keep the final judgment human.</p>
       </div>
+
       <div className="notice">
-        Every match and classification is selected by the analyst. No identity
-        is determined automatically.
+        Match states and classifications are analyst-selected. Research Companion does not determine identity automatically.
       </div>
+
       <Section
         title={`Candidate identities · ${c.candidates.length}`}
+        description="Treat each possible identity as its own working hypothesis."
         action={
           <AddButton
             onClick={() =>
@@ -51,91 +57,79 @@ export function ComparePage() {
               })
             }
           >
-            Add
+            Add candidate
           </AddButton>
         }
       >
         {!c.candidates.length ? (
-          <Empty title="Keep possibilities separate.">
-            Add a candidate to compare their identifiers with the subject.
+          <Empty title="No candidates yet">
+            Add a candidate when you need to compare a possible identity with the subject.
           </Empty>
         ) : (
-          c.candidates.map((candidate, index) => (
-            <article className="candidate" key={candidate.id}>
+          c.candidates.map((item, index) => (
+            <article className="candidate" key={item.id}>
               <div className="candidate-header">
-                <span className="candidate-letter">
+                <span className="candidate-letter" aria-hidden="true">
                   {String.fromCharCode(65 + index)}
                 </span>
                 <div>
-                  <h3>{candidate.name}</h3>
-                  <span className="tag">{candidate.classification}</span>
+                  <h3>{item.name}</h3>
+                  <span className="tag">{item.classification}</span>
                 </div>
-                <button
-                  className="text-button"
-                  onClick={() => setCandidate(candidate)}
-                >
-                  Edit
+                <button className="text-button" onClick={() => setCandidate(item)}>
+                  Review
                 </button>
               </div>
-              <div className="candidate-values">
-                {candidate.identifiers.map((i) => (
-                  <p key={i.id}>
-                    <span>{human(i.type)}</span>
-                    {i.value}
-                  </p>
-                ))}
-              </div>
-              {candidate.rationale && (
-                <p className="hint preserve">{candidate.rationale}</p>
+              {!!item.identifiers.length && (
+                <div className="candidate-values">
+                  {item.identifiers.map((i) => (
+                    <p key={i.id}>
+                      <span>{human(i.type)}</span>
+                      {i.value}
+                    </p>
+                  ))}
+                </div>
               )}
+              {item.rationale && <p className="hint preserve">{item.rationale}</p>}
             </article>
           ))
         )}
       </Section>
+
       <Section
-        title="Identifier match matrix"
-        description="Each cell is a manual assessment. Scroll horizontally to compare candidates."
+        title="Compare identifiers"
+        description="Open a candidate and assess the subject identifiers vertically—no squeezed spreadsheet."
       >
         {c.candidates.length && c.identifiers.length ? (
-          <div
-            className="matrix-scroll"
-            tabIndex={0}
-            role="region"
-            aria-label="Scrollable identifier comparison matrix"
-          >
-            <table>
-              <thead>
-                <tr>
-                  <th>Identifier / subject</th>
-                  {c.candidates.map((candidate) => (
-                    <th key={candidate.id}>{candidate.name}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {comparisonRows(c).map((row) => (
-                  <tr key={row.identifier.id}>
-                    <th>
-                      <small>{human(row.identifier.type)}</small>
-                      <strong>{row.identifier.value}</strong>
-                    </th>
-                    {row.cells.map((cell) => (
-                      <td
-                        key={cell.candidateId}
-                        className={
-                          "cell-" +
-                          cell.status.toLowerCase().replaceAll(" ", "-")
-                        }
-                      >
+          c.candidates.map((item) => (
+            <details className="comparison-candidate" key={item.id}>
+              <summary>
+                <strong>{item.name}</strong>
+                <span className="tag">{item.classification}</span>
+              </summary>
+              <div className="comparison-list">
+                {rows.map((row) => {
+                  const cell = row.cells.find((x) => x.candidateId === item.id);
+                  if (!cell) return null;
+                  const stateClass = cell.status.toLowerCase().replaceAll(" ", "-");
+                  return (
+                    <div
+                      className={`comparison-row cell-${stateClass}`}
+                      key={`${item.id}-${row.identifier.id}`}
+                    >
+                      <div className="comparison-subject">
+                        <small>{human(row.identifier.type)}</small>
+                        <strong>{row.identifier.value}</strong>
+                      </div>
+                      <label className="comparison-status">
+                        <span>Assessment</span>
                         <select
-                          aria-label={`${row.identifier.value} against ${c.candidates.find((c) => c.id === cell.candidateId)?.name}`}
+                          aria-label={`${row.identifier.value} against ${item.name}`}
                           value={cell.status}
                           onChange={(e) =>
                             void run(async () => {
                               const next = structuredClone(c);
-                              const index = next.candidates.findIndex(
-                                (x) => x.id === cell.candidateId,
-                              );
+                              const index = next.candidates.findIndex((x) => x.id === item.id);
                               next.candidates[index] = setComparison(
                                 next.candidates[index],
                                 row.identifier.id,
@@ -145,7 +139,7 @@ export function ComparePage() {
                               activity(
                                 next,
                                 "candidate",
-                                `${next.candidates[index].name}: ${row.identifier.value} — ${e.target.value}`,
+                                `${item.name}: ${row.identifier.value} — ${e.target.value}`,
                               );
                               await save(next);
                             })
@@ -157,59 +151,55 @@ export function ComparePage() {
                             </option>
                           ))}
                         </select>
-                        <form
-                          className="cell-note"
-                          key={cell.note}
-                          onSubmit={(e) => {
-                            e.preventDefault();
-                            const note = String(
-                              new FormData(e.currentTarget).get("note"),
+                      </label>
+                      <form
+                        className="comparison-note"
+                        key={cell.note}
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          const note = String(new FormData(e.currentTarget).get("note"));
+                          void run(async () => {
+                            const next = structuredClone(c);
+                            const index = next.candidates.findIndex((x) => x.id === item.id);
+                            next.candidates[index] = setComparison(
+                              next.candidates[index],
+                              row.identifier.id,
+                              cell.status,
+                              note,
                             );
-                            void run(async () => {
-                              const next = structuredClone(c);
-                              const index = next.candidates.findIndex(
-                                (x) => x.id === cell.candidateId,
-                              );
-                              next.candidates[index] = setComparison(
-                                next.candidates[index],
-                                row.identifier.id,
-                                cell.status,
-                                note,
-                              );
-                              activity(
-                                next,
-                                "note",
-                                `Comparison note updated: ${next.candidates[index].name}, ${row.identifier.value}`,
-                              );
-                              await save(next);
-                            });
-                          }}
-                        >
-                          <input
-                            name="note"
-                            aria-label={`Comparison note for ${row.identifier.value}, ${c.candidates.find((c) => c.id === cell.candidateId)?.name}`}
-                            defaultValue={cell.note}
-                            placeholder="Evidence / context"
-                          />
-                          <button>Save</button>
-                        </form>
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                            activity(
+                              next,
+                              "note",
+                              `Comparison note updated: ${item.name}, ${row.identifier.value}`,
+                            );
+                            await save(next);
+                          });
+                        }}
+                      >
+                        <input
+                          name="note"
+                          aria-label={`Comparison note for ${row.identifier.value}, ${item.name}`}
+                          defaultValue={cell.note}
+                          placeholder="Evidence or context…"
+                        />
+                        <button>Save</button>
+                      </form>
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
+          ))
         ) : (
           <p className="hint">
-            Add subject identifiers and at least one candidate to build the
-            matrix.
+            Add subject identifiers and at least one candidate to start comparing.
           </p>
         )}
       </Section>
+
       <Section
         title="Discrepancies"
-        description="Conflicting information stays visible until you resolve it."
+        description="Keep conflicting information visible until you resolve it."
         action={
           <AddButton
             onClick={() =>
@@ -226,17 +216,15 @@ export function ComparePage() {
               })
             }
           >
-            Add
+            Add discrepancy
           </AddButton>
         }
       >
-        {!c.discrepancies.length && (
-          <p className="hint">No discrepancies recorded.</p>
-        )}
+        {!c.discrepancies.length && <p className="hint">No discrepancies recorded.</p>}
         {c.discrepancies.map((d) => (
           <article className="finding" key={d.id}>
             <div className="finding-meta">
-              <span>≠ DISCREPANCY</span>
+              <span>DISCREPANCY</span>
               <span>{d.status}</span>
             </div>
             <h3>{d.title}</h3>
@@ -250,7 +238,7 @@ export function ComparePage() {
                 {d.valueB}
               </p>
             </div>
-            <p>{d.explanation}</p>
+            {d.explanation && <p>{d.explanation}</p>}
             {d.notes && <p className="preserve">{d.notes}</p>}
             <button className="text-button" onClick={() => setDiscrepancy(d)}>
               Review / resolve
@@ -258,6 +246,7 @@ export function ComparePage() {
           </article>
         ))}
       </Section>
+
       {candidate && (
         <CandidateEditor
           key={candidate.id}
@@ -279,28 +268,18 @@ export function ComparePage() {
           onDelete={
             c.candidates.some((x) => x.id === candidate.id)
               ? async () => {
-                  if (
-                    !confirm(
-                      "Delete this candidate and their comparison cells?",
-                    )
-                  )
-                    return;
+                  if (!confirm("Delete this candidate and their comparison cells?")) return;
                   const next = structuredClone(c);
-                  next.candidates = next.candidates.filter(
-                    (x) => x.id !== candidate.id,
-                  );
-                  activity(
-                    next,
-                    "candidate",
-                    `Candidate removed: ${candidate.name}`,
-                  );
+                  next.candidates = next.candidates.filter((x) => x.id !== candidate.id);
+                  activity(next, "candidate", `Candidate removed: ${candidate.name}`);
                   await save(next);
                   setCandidate(null);
                 }
               : undefined
           }
         />
-      )}{" "}
+      )}
+
       {discrepancy && (
         <Modal title="Review discrepancy" close={() => setDiscrepancy(null)}>
           <form
@@ -308,9 +287,7 @@ export function ComparePage() {
               e.preventDefault();
               void run(async () => {
                 const next = structuredClone(c);
-                const index = next.discrepancies.findIndex(
-                  (x) => x.id === discrepancy.id,
-                );
+                const index = next.discrepancies.findIndex((x) => x.id === discrepancy.id);
                 if (index >= 0) next.discrepancies[index] = discrepancy;
                 else next.discrepancies.push(discrepancy);
                 activity(
@@ -374,6 +351,7 @@ export function ComparePage() {
     </>
   );
 }
+
 function CandidateEditor({
   initial,
   close,
@@ -389,6 +367,7 @@ function CandidateEditor({
   const [candidate, setCandidate] = useState(initial);
   const [type, setType] = useState<IdentifierType>("name");
   const [value, setValue] = useState("");
+
   return (
     <Modal title="Candidate profile" close={close}>
       <form
@@ -402,9 +381,7 @@ function CandidateEditor({
             required
             autoFocus
             value={candidate.name}
-            onChange={(e) =>
-              setCandidate({ ...candidate, name: e.target.value })
-            }
+            onChange={(e) => setCandidate({ ...candidate, name: e.target.value })}
           />
         </Field>
         <Field label="Analyst classification">
@@ -425,11 +402,10 @@ function CandidateEditor({
         <Field label="Assessment rationale">
           <textarea
             value={candidate.rationale}
-            onChange={(e) =>
-              setCandidate({ ...candidate, rationale: e.target.value })
-            }
+            onChange={(e) => setCandidate({ ...candidate, rationale: e.target.value })}
           />
         </Field>
+
         <h3>Discovered identifiers</h3>
         {candidate.identifiers.map((i) => (
           <div className="candidate-identifier" key={i.id}>
@@ -452,9 +428,7 @@ function CandidateEditor({
               onClick={() =>
                 setCandidate({
                   ...candidate,
-                  identifiers: candidate.identifiers.filter(
-                    (x) => x.id !== i.id,
-                  ),
+                  identifiers: candidate.identifiers.filter((x) => x.id !== i.id),
                 })
               }
             >
@@ -462,12 +436,10 @@ function CandidateEditor({
             </button>
           </div>
         ))}
+
         <div className="form-grid">
           <Field label="Identifier type">
-            <select
-              value={type}
-              onChange={(e) => setType(e.target.value as IdentifierType)}
-            >
+            <select value={type} onChange={(e) => setType(e.target.value as IdentifierType)}>
               {identifierTypes.map((t) => (
                 <option key={t} value={t}>
                   {human(t)}
@@ -479,6 +451,7 @@ function CandidateEditor({
             <input value={value} onChange={(e) => setValue(e.target.value)} />
           </Field>
         </div>
+
         <button
           type="button"
           disabled={!value.trim()}
@@ -495,14 +468,11 @@ function CandidateEditor({
         >
           Add to candidate
         </button>
+
         <div className="form-actions">
           <button className="primary">Save candidate</button>
           {onDelete && (
-            <button
-              type="button"
-              className="danger"
-              onClick={() => void run(onDelete)}
-            >
+            <button type="button" className="danger" onClick={() => void run(onDelete)}>
               Delete
             </button>
           )}

@@ -9,32 +9,46 @@ import { useWorkspace } from "../workspace";
 import { AddButton, Field, Section, human } from "../components/ui";
 import { IdentifierChip } from "../components/IdentifierEditor";
 import { mutate } from "../../services/storage";
+
 export function CasePage() {
   const { c, save, run, editIdentifier, refresh, navigate } = useWorkspace();
   const [editing, setEditing] = useState(false);
   const [filter, setFilter] = useState("");
   if (!c) return null;
+
   const checked = Object.values(c.checklist).filter(
     (s) => s.status !== "not_checked",
   ).length;
+  const location = [c.profile.city, c.profile.state, c.profile.country]
+    .filter(Boolean)
+    .join(", ");
+  const subjectContext = [c.profile.age ? `Age ${c.profile.age}` : "", location]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
     <>
       <div className="page-title">
-        <div>
-          <span className="eyebrow">CASE WORKSPACE</span>
-          <h1>Build the picture.</h1>
-          <p>Keep identifiers, evidence, and decisions connected.</p>
-        </div>
+        <span className="eyebrow">CASE BRIEF</span>
+        <h1>{c.subjectName}</h1>
+        <p>
+          {subjectContext ||
+            "Keep the subject, identifiers, findings, and research trail in one place."}
+        </p>
       </div>
+
       {c.demo && (
         <div className="notice">
           FICTIONAL DEMO DATA · All records and assessments are illustrative.
         </div>
       )}
-      <div className="stats">
+
+      <div className="stats" aria-label="Case overview">
         <button
           onClick={() =>
-            document.getElementById("identifiers")?.scrollIntoView()
+            document.getElementById("identifiers")?.scrollIntoView({
+              behavior: "smooth",
+            })
           }
         >
           <strong>{c.identifiers.length}</strong>
@@ -46,11 +60,13 @@ export function CasePage() {
         </button>
         <button onClick={() => navigate("SEARCH")}>
           <strong>{checked}</strong>
-          <span>Sources checked</span>
+          <span>Sources reviewed</span>
         </button>
       </div>
+
       <Section
         title="Subject overview"
+        description="Known details stay readable until you need to edit them."
         action={
           <button className="text-button" onClick={() => setEditing(!editing)}>
             {editing ? "Cancel" : "Edit details"}
@@ -113,7 +129,8 @@ export function CasePage() {
             </dl>
             {!profileFields.some((k) => c.profile[k]) && (
               <p className="hint">
-                Add locations, contact information, and known associations.
+                Add locations, contact information, and known associations when
+                they become relevant.
               </p>
             )}
             {c.notes && <p className="preserve">{c.notes}</p>}
@@ -171,18 +188,21 @@ export function CasePage() {
           </>
         )}
       </Section>
+
       <div id="identifiers">
         <Section
           title="Known identifiers"
-          description="Select an identifier to search, verify, or add context."
-          action={<AddButton onClick={() => editIdentifier()}>Add</AddButton>}
+          description="Use these as pivots. Open one to search, verify, copy, or add context."
+          action={<AddButton onClick={() => editIdentifier()}>Add identifier</AddButton>}
         >
-          <input
-            aria-label="Filter identifiers"
-            placeholder="Filter identifiers…"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
+          {!!c.identifiers.length && (
+            <input
+              aria-label="Filter identifiers"
+              placeholder="Filter identifiers…"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+          )}
           <div className="chips">
             {c.identifiers
               .filter((i) =>
@@ -196,14 +216,15 @@ export function CasePage() {
           </div>
           {!c.identifiers.length && (
             <p className="hint">
-              Start with a name, username, email, or location.
+              Start with a name, username, email, phone number, or location.
             </p>
           )}
         </Section>
       </div>
+
       <Section
         title="Research trail"
-        description="A chronological record of this case."
+        description="A quiet chronological record of what changed in this case."
       >
         <div className="timeline">
           {c.activity
@@ -222,11 +243,12 @@ export function CasePage() {
         </div>
         {c.activity.length > 100 && (
           <p className="hint">
-            Showing the latest 100 events. Full trail is included in JSON
+            Showing the latest 100 events. The full trail is included in JSON
             export.
           </p>
         )}
       </Section>
+
       <Section title="Case management">
         <div className="button-grid">
           <button
