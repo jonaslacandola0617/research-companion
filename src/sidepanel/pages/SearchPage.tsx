@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowUpRight, Copy, Search, SlidersHorizontal } from "lucide-react";
 import {
   activity,
@@ -41,23 +41,21 @@ export function SearchPage({
 
   const sources = state.settings.sources.filter((s) => s.enabled);
   const selectedCount = selected.filter((id) => sources.some((s) => s.id === id)).length;
-
-  const recommended = useMemo(() => {
-    const map: Partial<Record<Identifier["type"], string[]>> = {
-      name: ["google", "bing", "whitepages", "spokeo", "radaris", "facebook", "linkedin"],
-      alias: ["google", "bing", "idcrawl", "facebook", "instagram"],
-      username: ["google", "whatsmyname", "idcrawl", "instagram", "x", "reddit"],
-      email: ["google", "epieos", "bing"],
-      phone: ["google", "epieos", "whitepages", "spokeo"],
-      employer: ["google", "linkedin", "rocketreach"],
-      website: ["google", "bing", "duckduckgo", "google-review-date-finder"],
-    };
-    const preferred = map[identifier.type] || ["google", "bing", "duckduckgo"];
-    return preferred.filter((id) => {
-      const source = sources.find((s) => s.id === id);
-      return source?.supportedIdentifiers.includes(identifier.type);
-    });
-  }, [identifier.type, sources]);
+  const recommendedMap: Partial<Record<Identifier["type"], string[]>> = {
+    name: ["google", "bing", "whitepages", "spokeo", "radaris", "facebook", "linkedin"],
+    alias: ["google", "bing", "idcrawl", "facebook", "instagram"],
+    username: ["google", "whatsmyname", "idcrawl", "instagram", "x", "reddit"],
+    email: ["google", "epieos", "bing"],
+    phone: ["google", "epieos", "whitepages", "spokeo"],
+    employer: ["google", "linkedin", "rocketreach"],
+    website: ["google", "bing", "duckduckgo", "google-review-date-finder"],
+  };
+  const recommended = (
+    recommendedMap[identifier.type] || ["google", "bing", "duckduckgo"]
+  ).filter((id) => {
+    const source = sources.find((s) => s.id === id);
+    return source?.supportedIdentifiers.includes(identifier.type);
+  });
 
   const launch = () =>
     void run(async () => {
