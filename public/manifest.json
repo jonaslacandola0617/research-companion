@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "Research Companion",
+  "version": "1.0.0",
+  "description": "A local-first, analyst-controlled research workspace.",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "storage",
+    "tabs",
+    "tabGroups",
+    "contextMenus",
+    "sidePanel",
+    "activeTab",
+    "scripting"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Open Research Companion"
+  },
+  "side_panel": {
+    "default_path": "index.html"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+R"
+      },
+      "description": "Open Research Companion"
+    },
+    "capture-finding": {
+      "suggested_key": {
+        "default": "Alt+Shift+F"
+      },
+      "description": "Capture selected text as finding"
+    },
+    "add-identifier": {
+      "suggested_key": {
+        "default": "Alt+Shift+I"
+      },
+      "description": "Add selected text as identifier"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'none'"
+  },
+  "icons": {
+    "128": "icons/icon-128.png",
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png"
+  }
+}
