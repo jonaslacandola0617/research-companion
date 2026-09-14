@@ -1,6 +1,7 @@
 import { type CaptureDraft, type IdentifierType } from "../types";
 export const menuItems = [
-  ["add", "Add to Current Case"],
+  ["add", "Add as identifier"],
+  ["lead", "Save as lead"],
   ["exact", "Search Exact Text"],
   ["name", "Search as Name"],
   ["username", "Search as Username"],
@@ -12,7 +13,7 @@ export const menuItems = [
   ["duckduckgo", "Search DuckDuckGo"],
   ["whatsmyname", "Search WhatsMyName"],
   ["idcrawl", "Search IDCrawl"],
-  ["capture", "Capture as Finding"],
+  ["capture", "Save finding"],
 ];
 export async function setupMenus() {
   await chrome.contextMenus.removeAll();
@@ -48,6 +49,8 @@ export function makeDraft(
     mode:
       action === "capture"
         ? "finding"
+        : action === "lead"
+          ? "lead"
         : action === "add"
           ? "identifier"
           : "search",

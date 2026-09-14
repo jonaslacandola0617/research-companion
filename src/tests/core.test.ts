@@ -94,6 +94,36 @@ describe("case serialization and validation", () => {
   });
   it("preserves bad storage rather than overwriting it", () =>
     expect(() => migrate({ schemaVersion: 99 })).toThrow("preserved"));
+  it("migrates version 1 cases without deleting existing records", () => {
+    const current = emptyState();
+    const c = createCase("Legacy Person");
+    c.identifiers.push(makeIdentifier("username", "legacy-handle"));
+    const legacyCase = structuredClone(c) as Record<string, any>;
+    legacyCase.identifiers[0].status = "unverified";
+    delete legacyCase.searchRuns;
+    delete legacyCase.searchHistory;
+    delete legacyCase.leads;
+    const legacySources = current.settings.sources.map((source) => {
+      const value = structuredClone(source) as Record<string, any>;
+      delete value.interaction;
+      delete value.directTemplate;
+      delete value.priority;
+      delete value.requiresLogin;
+      delete value.potentiallyBlocked;
+      return value;
+    });
+    const migrated = migrate({
+      schemaVersion: 1,
+      activeCaseId: c.id,
+      cases: [legacyCase],
+      settings: { theme: "light", sources: legacySources },
+    });
+    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.cases[0].subjectName).toBe("Legacy Person");
+    expect(migrated.cases[0].identifiers[0].status).toBe("analyst_supplied");
+    expect(migrated.cases[0].searchRuns).toEqual([]);
+    expect(migrated.settings.deepSearch.defaultTaskLimit).toBe(36);
+  });
   it("blocks conflicting saves and duplicate imports", () => {
     const c = createCase("A");
     const state = emptyState();

@@ -1,421 +1,238 @@
-import { useEffect, useState } from "react";
-import { ArrowUpRight, Copy, Search, SlidersHorizontal } from "lucide-react";
+import { useState } from "react";
 import {
-  activity,
-  categories,
-  identifierTypes,
-  makeIdentifier,
-  now,
-  statuses,
-  type Identifier,
-} from "../../types";
-import { categoryLabels } from "../../config/researchSources";
-import { buildQueries, buildSearchUrl } from "../../services/queryBuilder";
+  CheckCircle2,
+  ExternalLink,
+  Pause,
+  Play,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
+import { activity, type DeepSearchTask, type DeepSearchTaskStatus } from "../../types";
+import { createSearchRun, unusedExpansionIdentifiers } from "../../services/deepSearch";
 import { request } from "../../services/storage";
 import { useWorkspace } from "../workspace";
-import { Field, Section, human } from "../components/ui";
+import { Empty, Section, human } from "../components/ui";
 
-export function SearchPage({
-  initial,
-  sourceId,
-}: {
-  initial?: Identifier;
-  sourceId?: string;
-}) {
-  const { c, state, run, refresh, save, notify, windowId } = useWorkspace();
-  const [identifier, setIdentifier] = useState(
-    initial || makeIdentifier("name", c?.subjectName || ""),
+const finishedStatuses: DeepSearchTaskStatus[] = [
+  "reviewed",
+  "useful_lead",
+  "no_useful_result",
+  "unavailable",
+  "blocked",
+  "skipped",
+];
+
+export function SearchPage() {
+  const { c, state, save, run, refresh, notify, windowId, editIdentifier } = useWorkspace();
+  const [includePublicRecords, setIncludePublicRecords] = useState(
+    state.settings.deepSearch.includePublicRecords,
   );
-  const [selected, setSelected] = useState<string[]>(
-    sourceId ? [sourceId] : ["google"],
-  );
-  const [filter, setFilter] = useState("");
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (initial) setIdentifier(initial);
-    if (sourceId) setSelected([sourceId]);
-  }, [initial, sourceId]);
-
   if (!c) return null;
 
-  const sources = state.settings.sources.filter((s) => s.enabled);
-  const selectedCount = selected.filter((id) => sources.some((s) => s.id === id)).length;
-  const recommendedMap: Partial<Record<Identifier["type"], string[]>> = {
-    name: ["google", "bing", "whitepages", "spokeo", "radaris", "facebook", "linkedin"],
-    alias: ["google", "bing", "idcrawl", "facebook", "instagram"],
-    username: ["google", "whatsmyname", "idcrawl", "instagram", "x", "reddit"],
-    email: ["google", "epieos", "bing"],
-    phone: ["google", "epieos", "whitepages", "spokeo"],
-    employer: ["google", "linkedin", "rocketreach"],
-    website: ["google", "bing", "duckduckgo", "google-review-date-finder"],
-  };
-  const recommended = (
-    recommendedMap[identifier.type] || ["google", "bing", "duckduckgo"]
-  ).filter((id) => {
-    const source = sources.find((s) => s.id === id);
-    return source?.supportedIdentifiers.includes(identifier.type);
-  });
+  const latest = c.searchRuns.at(-1);
+  const expansionIdentifiers = unusedExpansionIdentifiers(c);
+  const verified = c.identifiers.filter((i) => i.status === "verified").length;
+  const unverified = c.identifiers.length - verified;
+  const tasks = latest?.tasks || [];
+  const activeTasks = tasks.filter((task) => task.enabled);
+  const completed = activeTasks.filter((task) => finishedStatuses.includes(task.status)).length;
+  const opened = activeTasks.filter((task) => task.status === "opened").length;
+  const planned = activeTasks.filter((task) => task.status === "planned");
+  const progress = activeTasks.length ? ((completed + opened) / activeTasks.length) * 100 : 0;
+  const counts: Record<string, number> = {};
+  for (const task of activeTasks) counts[task.category] = (counts[task.category] || 0) + 1;
 
-  const launch = () =>
+  const generate = (continuation = false) =>
     void run(async () => {
-      const ids = selected.filter((id) => sources.some((s) => s.id === id));
-      if (!identifier.value.trim()) throw Error("Enter an identifier or query first.");
-      if (!ids.length) throw Error("Select at least one source.");
-      const confirmed =
-        ids.length > 10
-          ? confirm(`You are about to open ${ids.length} research tabs. Continue?`)
-          : false;
-      if (ids.length > 10 && !confirmed) return;
-      ids.forEach((id) =>
-        buildSearchUrl(sources.find((s) => s.id === id)!, identifier, c),
+      const next = structuredClone(c);
+      const seedIdentifierIds = continuation
+        ? expansionIdentifiers.map((identifier) => identifier.id)
+        : undefined;
+      if (continuation && !seedIdentifierIds?.length)
+        throw Error("No new analyst-approved identifiers are available for expansion.");
+      const searchRun = createSearchRun(next, state.settings.sources, {
+        maxTasks: continuation
+          ? state.settings.deepSearch.continuationTaskLimit
+          : state.settings.deepSearch.defaultTaskLimit,
+        includePublicRecords,
+        preferredEngines: state.settings.deepSearch.preferredEngines,
+        seedIdentifierIds,
+      });
+      if (!searchRun.tasks.length)
+        throw Error(
+          continuation
+            ? "Those identifiers produced no new searches. Previous queries and disabled sources were skipped."
+            : "No searches could be prepared. Check the case identifiers and enabled sources.",
+        );
+      if (latest?.status === "planned" && !continuation)
+        next.searchRuns[next.searchRuns.length - 1] = searchRun;
+      else next.searchRuns.push(searchRun);
+      activity(
+        next,
+        "search",
+        `${continuation ? "Continuation" : "Deep Search"} wave prepared: ${searchRun.tasks.length} searches`,
       );
+      await save(next);
+      notify(`${searchRun.tasks.length} new searches prepared for analyst review.`);
+    });
+
+  const updatePlan = (updater: (tasks: DeepSearchTask[]) => DeepSearchTask[]) =>
+    void run(async () => {
+      if (!latest || latest.status !== "planned")
+        throw Error("Only a planned run can be edited.");
+      const next = structuredClone(c);
+      const target = next.searchRuns.find((item) => item.id === latest.id)!;
+      target.tasks = updater(target.tasks);
+      target.updatedAt = new Date().toISOString();
+      await save(next);
+    });
+
+  const nextBatch = () =>
+    void run(async () => {
+      if (!latest) return;
       setBusy(true);
       try {
-        const result = await request<{ opened: number; errors: string[] }>({
-          kind: "launch",
+        const result = await request<{ opened: number; errors: string[]; status: string }>({
+          kind: "run-search-batch",
           caseId: c.id,
-          identifier,
-          sourceIds: ids,
-          confirmed,
+          runId: latest.id,
           windowId,
         });
         await refresh();
-        notify(
-          `Opened ${result.opened} research tabs for “${identifier.value}”. ${result.errors.join(" ")}`,
-        );
+        notify(`Opened ${result.opened} searches. ${result.errors.join(" ")}`.trim());
       } finally {
         setBusy(false);
       }
     });
 
+  const updateRun = (action: "pause" | "continue") =>
+    void run(async () => {
+      if (!latest) return;
+      await request({ kind: "update-run", caseId: c.id, runId: latest.id, action });
+      await refresh();
+    });
+
+  const updateTask = (taskId: string, status: DeepSearchTaskStatus) =>
+    void run(async () => {
+      if (!latest) return;
+      await request({ kind: "update-search-task", caseId: c.id, runId: latest.id, taskId, status });
+      await refresh();
+    });
+
+  const tabAction = (action: string) =>
+    void run(async () => {
+      await request({ kind: "tabs", caseId: c.id, action, windowId });
+      notify("Research tab action completed.");
+    });
+
   return (
     <>
-      <div className="page-title compact-title">
-        <span className="eyebrow">SEARCH</span>
-        <h1>Search sources.</h1>
-        <p>Start with one identifier, choose where to look, then review results yourself.</p>
+      <div className="page-title compact-title deep-search-title">
+        <span className="eyebrow">DEEP SEARCH</span>
+        <h1>{c.subjectName}</h1>
+        <p>{c.identifiers.length} known identifiers · {verified} verified · {unverified} supplied or unverified</p>
       </div>
 
-      <section className="search-workflow" aria-label="Search workflow">
-        <div className="workflow-step">
-          <div className="step-marker">1</div>
-          <div className="step-body">
-            <div className="step-heading">
-              <div>
-                <span className="eyebrow">SEARCH FOR</span>
-                <strong>{identifier.value || "Choose an identifier"}</strong>
-              </div>
-              <span className="type-label">{human(identifier.type)}</span>
+      <div className="deep-search-actions">
+        <button className="subtle" onClick={() => editIdentifier()}><Plus size={15} /> Add identifier</button>
+        <label className="check-label public-record-toggle">
+          <input type="checkbox" checked={includePublicRecords} onChange={(event) => setIncludePublicRecords(event.target.checked)} />
+          Include public-record sources
+        </label>
+      </div>
+
+      {!latest ? (
+        <Empty
+          title="Build the first search wave"
+          action={<button className="primary" onClick={() => generate(false)}><Play size={16} /> Prepare Deep Search</button>}
+        >
+          The planner ranks identifier combinations, distributes them across engines, and caps the plan at {state.settings.deepSearch.defaultTaskLimit} tasks. Nothing opens until you approve a batch.
+        </Empty>
+      ) : (
+        <>
+          {expansionIdentifiers.length > 0 && latest.status !== "planned" && (
+            <div className="notice expansion-notice">
+              <span>{expansionIdentifiers.length} new analyst-approved identifier{expansionIdentifiers.length === 1 ? "" : "s"} available for expansion.</span>
+              <button onClick={() => generate(true)}>Continue Deep Search</button>
             </div>
+          )}
 
-            <Field label="Known identifier">
-              <select
-                value={c.identifiers.some((i) => i.id === identifier.id) ? identifier.id : ""}
-                onChange={(e) => {
-                  const i = c.identifiers.find((i) => i.id === e.target.value);
-                  if (i) setIdentifier(i);
-                }}
-              >
-                <option value="">Custom input</option>
-                {c.identifiers.map((i) => (
-                  <option key={i.id} value={i.id}>
-                    {i.value} · {human(i.type)}
-                  </option>
-                ))}
-              </select>
-            </Field>
-
-            <Field label="Identifier or query">
-              <div className="input-action">
-                <input
-                  value={identifier.value}
-                  onChange={(e) =>
-                    setIdentifier({
-                      ...identifier,
-                      id: crypto.randomUUID(),
-                      value: e.target.value,
-                    })
-                  }
-                />
-                <button
-                  className="icon"
-                  aria-label="Copy search input"
-                  title="Copy search input"
-                  onClick={() =>
-                    void run(async () => {
-                      await navigator.clipboard.writeText(identifier.value);
-                      notify("Search input copied.");
-                    })
-                  }
-                >
-                  <Copy size={16} />
-                </button>
-              </div>
-            </Field>
-
-            <details className="quiet-disclosure">
-              <summary>
-                <SlidersHorizontal size={14} />
-                Change identifier type
-              </summary>
-              <Field label="Identifier type">
-                <select
-                  value={identifier.type}
-                  onChange={(e) =>
-                    setIdentifier({
-                      ...identifier,
-                      type: e.target.value as Identifier["type"],
-                    })
-                  }
-                >
-                  {identifierTypes.map((t) => (
-                    <option key={t} value={t}>
-                      {human(t)}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </details>
-          </div>
-        </div>
-
-        <div className="workflow-step">
-          <div className="step-marker">2</div>
-          <div className="step-body">
-            <div className="step-heading source-pick-heading">
-              <div>
-                <span className="eyebrow">SEARCH SOURCES</span>
-                <strong>{selectedCount} selected</strong>
-              </div>
-              <div className="selection-actions">
-                <button className="text-button" onClick={() => setSelected(recommended)}>
-                  Select recommended
-                </button>
-                <button className="text-button muted-action" onClick={() => setSelected([])}>
-                  Clear
-                </button>
-              </div>
+          <Section
+            title={`Search plan · wave ${latest.wave}`}
+            description={`${activeTasks.length} searches prepared · ${human(latest.kind)} wave · ${human(latest.status)}`}
+            action={latest.status === "planned" ? <button className="text-button" onClick={() => generate(false)}><RefreshCw size={14} /> Regenerate</button> : undefined}
+          >
+            <div className="plan-summary">
+              {Object.entries(counts).map(([category, count]) => <span key={category}><strong>{count}</strong> {categoryLabel(category)}</span>)}
             </div>
+            <div className="research-progress" aria-label="Research progress">
+              <div><strong>{completed + opened} / {activeTasks.length}</strong><span> searches opened or reviewed</span></div>
+              <span className="progress-track"><span style={{ width: `${progress}%` }} /></span>
+            </div>
+            <div className="batch-actions">
+              {latest.status === "paused" ? (
+                <button className="primary" onClick={() => updateRun("continue")}><Play size={15} /> Continue run</button>
+              ) : planned.length ? (
+                <button className="primary" disabled={busy} onClick={nextBatch}><Play size={15} /> {busy ? "Opening…" : `Run next batch · ${Math.min(planned.length, state.settings.deepSearch.batchSize)}`}</button>
+              ) : null}
+              {latest.status === "running" && <button onClick={() => updateRun("pause")}><Pause size={15} /> Pause</button>}
+            </div>
+            <p className="hint">Searches open only in controlled batches. Manual tasks open the source homepage and show what to enter. No forms, login walls, CAPTCHAs, or identity decisions are automated.</p>
+          </Section>
 
-            <input
-              className="source-filter"
-              placeholder="Find a source…"
-              aria-label="Filter sources"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-            />
-
-            <div className="source-groups">
-              {categories.map((category) => {
-                const group = sources.filter((s) => s.category === category);
-                const visible = group.filter((s) =>
-                  s.name.toLowerCase().includes(filter.toLowerCase()),
-                );
-                if (!visible.length) return null;
-                const checked = group.filter(
-                  (s) =>
-                    c.checklist[s.id]?.status &&
-                    c.checklist[s.id].status !== "not_checked",
-                ).length;
-                const selectedInGroup = group.filter((s) => selected.includes(s.id)).length;
-
-                return (
-                  <details
-                    className="source-category warm-source-category"
-                    key={category}
-                    open={filter ? true : category === "GSR"}
-                  >
-                    <summary>
-                      <span>
-                        <strong>{categoryLabels[category]}</strong>
-                        <small>
-                          {selectedInGroup ? `${selectedInGroup} selected · ` : ""}
-                          {checked}/{group.length} reviewed
-                        </small>
-                      </span>
-                      <span className="count">{group.length}</span>
-                    </summary>
-
-                    <div className="source-list warm-source-list">
-                      {visible.map((source) => {
-                        const item = c.checklist[source.id];
-                        const supported = source.supportedIdentifiers.includes(identifier.type);
-                        return (
-                          <div className="source-row compact-source-row" key={source.id}>
-                            <div className="source-main-row">
-                              <label className="check-label source-choice">
-                                <input
-                                  type="checkbox"
-                                  disabled={!supported}
-                                  checked={selected.includes(source.id)}
-                                  onChange={(e) =>
-                                    setSelected(
-                                      e.target.checked
-                                        ? [...selected, source.id]
-                                        : selected.filter((x) => x !== source.id),
-                                    )
-                                  }
-                                />
-                                <span>
-                                  <strong>{source.name}</strong>
-                                  <small>
-                                    {!supported
-                                      ? `Not available for ${human(identifier.type)}`
-                                      : source.strategy === "homepage"
-                                        ? "Manual search"
-                                        : "Direct search"}
-                                  </small>
-                                </span>
-                              </label>
-
-                              <select
-                                className="source-status"
-                                aria-label={`${source.name} status`}
-                                value={item?.status || "not_checked"}
-                                onChange={(e) =>
-                                  void run(async () => {
-                                    const next = structuredClone(c);
-                                    next.checklist[source.id] = {
-                                      sourceId: source.id,
-                                      status: e.target.value as (typeof statuses)[number],
-                                      notes: item?.notes || "",
-                                      updatedAt: now(),
-                                    };
-                                    activity(next, "source", `${source.name}: ${human(e.target.value)}`);
-                                    await save(next);
-                                  })
-                                }
-                              >
-                                {statuses.map((s) => (
-                                  <option key={s} value={s}>
-                                    {s === "finding_found" ? "Finding" : human(s)}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-
-                            <details className="source-detail-disclosure">
-                              <summary>Notes & source info</summary>
-                              <p>{source.notes}</p>
-                              <form
-                                key={item?.updatedAt || "new"}
-                                className="inline-form"
-                                onSubmit={(e) => {
-                                  e.preventDefault();
-                                  const data = new FormData(e.currentTarget);
-                                  void run(async () => {
-                                    const next = structuredClone(c);
-                                    next.checklist[source.id] = {
-                                      sourceId: source.id,
-                                      status: item?.status || "not_checked",
-                                      notes: String(data.get("note")),
-                                      updatedAt: now(),
-                                    };
-                                    activity(next, "note", `${source.name} research note updated`);
-                                    await save(next);
-                                  });
-                                }}
-                              >
-                                <input
-                                  aria-label={`${source.name} note`}
-                                  name="note"
-                                  placeholder="Add a source note…"
-                                  defaultValue={item?.notes}
-                                />
-                                <button>Save</button>
-                              </form>
-                            </details>
-                          </div>
-                        );
-                      })}
+          <Section title={latest.status === "planned" ? "Preview search plan" : "Current search wave"}>
+            <div className="deep-task-list">
+              {tasks.map((task) => (
+                <article className={`deep-task ${task.enabled ? "" : "disabled"}`} key={task.id}>
+                  <div className="deep-task-top">
+                    {latest.status === "planned" && (
+                      <input aria-label={`Enable ${task.query}`} type="checkbox" checked={task.enabled} onChange={(event) => updatePlan((items) => items.map((item) => item.id === task.id ? { ...item, enabled: event.target.checked } : item))} />
+                    )}
+                    <div>
+                      <span className="eyebrow">{task.targetSourceName || human(task.engineSourceId)} · {task.interaction === "manual" ? "MANUAL" : human(task.engineSourceId)}</span>
+                      <code>{task.query}</code>
                     </div>
-                  </details>
-                );
-              })}
+                    {latest.status === "planned" && <button className="icon" aria-label="Remove task" onClick={() => updatePlan((items) => items.filter((item) => item.id !== task.id))}><Trash2 size={14} /></button>}
+                  </div>
+                  <div className="deep-task-meta">
+                    <span>{task.reason}</span>
+                    <span className={`priority ${task.searchPriority}`}>{human(task.searchPriority)} priority</span>
+                    <span>{human(task.status)}</span>
+                  </div>
+                  {task.requiresIndependentVerification && <p className="verification-warning">Requires independent verification. A shared name is not evidence of identity.</p>}
+                  {task.status === "opened" && (
+                    <div className="task-review-actions">
+                      <a href={task.url} target="_blank" rel="noreferrer"><ExternalLink size={13} /> Open</a>
+                      <button onClick={() => updateTask(task.id, "useful_lead")}>Useful lead</button>
+                      <button onClick={() => updateTask(task.id, "no_useful_result")}>No useful result</button>
+                      <button onClick={() => updateTask(task.id, "blocked")}>Blocked</button>
+                      <button className="icon" aria-label="Mark reviewed" onClick={() => updateTask(task.id, "reviewed")}><CheckCircle2 size={15} /></button>
+                    </div>
+                  )}
+                </article>
+              ))}
             </div>
-          </div>
+          </Section>
+        </>
+      )}
+
+      <Section title="Case research tabs" description="Only tabs created or explicitly grouped by this extension are managed.">
+        <div className="button-grid">
+          <button onClick={() => tabAction("focus")}>Focus research tabs</button>
+          <button onClick={() => tabAction("close-completed")}>Close completed tabs</button>
+          <button onClick={() => { if (confirm("Close all tracked research tabs for this case?")) tabAction("close"); }}>Close all case tabs</button>
         </div>
-
-        <div className="workflow-step final-step">
-          <div className="step-marker">3</div>
-          <div className="step-body">
-            <button disabled={busy} className="primary full search-primary" onClick={launch}>
-              <ArrowUpRight size={16} />
-              {busy ? "Opening searches…" : `Open searches · ${selectedCount}`}
-            </button>
-            <p className="hint">
-              Homepage sources open for manual entry. Opening a source marks it searched, never verified.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <Section title="Query workbench" description="Optional query variations for broader searching.">
-        <details className="quiet-disclosure query-disclosure">
-          <summary>Show prepared queries</summary>
-          <div className="query-list">
-            {buildQueries(c).map((q) => (
-              <div key={q}>
-                <code>{q}</code>
-                <button
-                  className="icon"
-                  aria-label={`Use query ${q}`}
-                  title="Use this query"
-                  onClick={() => {
-                    setIdentifier(makeIdentifier("name", q));
-                    setSelected(["google"]);
-                    window.scrollTo({ top: 0, behavior: "smooth" });
-                  }}
-                >
-                  <Search size={15} />
-                </button>
-                <button
-                  className="icon"
-                  aria-label={`Copy query ${q}`}
-                  title="Copy query"
-                  onClick={() =>
-                    void run(async () => {
-                      await navigator.clipboard.writeText(q);
-                      notify("Query copied.");
-                    })
-                  }
-                >
-                  <Copy size={14} />
-                </button>
-              </div>
-            ))}
-          </div>
-        </details>
-      </Section>
-
-      <Section title="Case tabs" description="Browser housekeeping for this case only.">
-        <details className="quiet-disclosure">
-          <summary>Manage research tabs</summary>
-          <div className="button-grid tab-actions-grid">
-            {[
-              ["focus", "Open research tabs"],
-              ["group", "Group current tab"],
-              ["ungroup", "Ungroup tabs"],
-              ["close", "Close case research tabs"],
-            ].map(([action, label]) => (
-              <button
-                key={action}
-                onClick={() => {
-                  if (action === "close" && !confirm("Close all tracked research tabs for this case?")) return;
-                  void run(async () => {
-                    await request({ kind: "tabs", caseId: c.id, action, windowId });
-                    notify(`${label}: completed.`);
-                  });
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <p className="hint">Ungrouping releases tab ownership. Tabs are tracked only for this browser session.</p>
-        </details>
       </Section>
     </>
   );
+}
+
+function categoryLabel(category: string) {
+  if (category === "GSR") return "General";
+  if (category === "PSE") return "People search";
+  if (category === "SEARCH") return "OSINT";
+  if (category === "ARREST") return "Public records";
+  return "Social media";
 }

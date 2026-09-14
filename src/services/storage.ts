@@ -8,18 +8,92 @@ import {
   type ExtensionSettings,
 } from "../types";
 import { defaultSources } from "../config/researchSources";
+import { normalizeQuery } from "./deepSearch";
 export const storageKey = "research-companion";
 export const inExtension = () =>
   typeof chrome !== "undefined" && !!chrome.runtime?.id;
 export const emptyState = (): AppState => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   activeCaseId: null,
   cases: [],
-  settings: { theme: "light", sources: structuredClone(defaultSources) },
+  settings: {
+    theme: "light",
+    sources: structuredClone(defaultSources),
+    deepSearch: {
+      defaultTaskLimit: 36,
+      continuationTaskLimit: 18,
+      batchSize: 5,
+      includePublicRecords: false,
+      preferredEngines: ["google", "bing", "duckduckgo"],
+    },
+  },
 });
 export function migrate(raw: unknown): AppState {
   if (raw == null) return emptyState();
-  const result = stateSchema.safeParse(raw);
+  let candidate = structuredClone(raw) as Record<string, any>;
+  if (candidate?.schemaVersion === 1) {
+    const defaults = emptyState();
+    candidate.schemaVersion = 2;
+    candidate.cases = Array.isArray(candidate.cases)
+      ? candidate.cases.map((c: Record<string, any>) => {
+          const legacyRunId = crypto.randomUUID();
+          const searches = Array.isArray(c.searches) ? c.searches : [];
+          return {
+            ...c,
+            identifiers: Array.isArray(c.identifiers)
+              ? c.identifiers.map((identifier: Record<string, any>) => ({
+                  ...identifier,
+                  status:
+                    identifier.status === "verified"
+                      ? "verified"
+                      : identifier.source === "Analyst entry"
+                        ? "analyst_supplied"
+                        : "unverified_lead",
+                }))
+              : [],
+            searchRuns: [],
+            searchHistory: searches.map((search: Record<string, any>) => ({
+              id: crypto.randomUUID(),
+              searchRunId: legacyRunId,
+              taskId: `legacy-${search.id}`,
+              query: search.query,
+              normalizedQuery: normalizeQuery(search.query),
+              engineSourceId: ["google", "bing", "duckduckgo"].includes(search.sourceId)
+                ? search.sourceId
+                : "google",
+              targetSourceId: ["google", "bing", "duckduckgo"].includes(search.sourceId)
+                ? undefined
+                : search.sourceId,
+              identifierIds: [],
+              url: search.url,
+              timestamp: search.at,
+              status: "opened",
+            })),
+            leads: [],
+          };
+        })
+      : candidate.cases;
+    candidate.settings = {
+      ...candidate.settings,
+      deepSearch: defaults.settings.deepSearch,
+      sources: Array.isArray(candidate.settings?.sources)
+        ? candidate.settings.sources.map((source: Record<string, any>) => {
+            const fallback = defaultSources.find((item) => item.id === source.id);
+            return {
+              ...source,
+              interaction:
+                fallback?.interaction ||
+                (source.strategy === "template" ? "direct" : "manual"),
+              directTemplate: fallback?.directTemplate || source.template || "",
+              priority: fallback?.priority || 50,
+              requiresLogin: fallback?.requiresLogin || false,
+              potentiallyBlocked: fallback?.potentiallyBlocked || false,
+            };
+          })
+        : candidate.settings?.sources,
+    };
+  }
+  const result = stateSchema.safeParse(candidate);
   if (!result.success)
     throw Error(
       "Stored workspace is malformed or uses an unsupported schema. Your original data has been preserved. Export a recovery backup before resetting.",
@@ -97,11 +171,24 @@ export function applyMutation(state: AppState, cmd: Mutation) {
   }
   if (cmd.type === "duplicate") {
     const c = structuredClone(get(cmd.id));
+    const runIds = new Map(c.searchRuns.map((run) => [run.id, crypto.randomUUID()]));
     c.id = crypto.randomUUID();
     c.subjectName += " (copy)";
     c.createdAt = new Date().toISOString();
     c.archived = false;
     c.findings.forEach((f) => (f.caseId = c.id));
+    c.leads.forEach((lead) => {
+      lead.id = crypto.randomUUID();
+      lead.caseId = c.id;
+    });
+    c.searchRuns.forEach((run) => {
+      run.id = runIds.get(run.id)!;
+      run.caseId = c.id;
+    });
+    c.searchHistory.forEach((entry) => {
+      entry.id = crypto.randomUUID();
+      entry.searchRunId = runIds.get(entry.searchRunId) || entry.searchRunId;
+    });
     activity(c, "case", "Case duplicated; original provenance retained");
     state.cases.push(c);
     state.activeCaseId = c.id;

@@ -104,8 +104,9 @@ export function IdentifierEditor({
             value={value.status}
             onChange={(e) => update("status", e.target.value)}
           >
-            <option value="unverified">Unverified</option>
+            <option value="analyst_supplied">Analyst supplied</option>
             <option value="verified">Verified by analyst</option>
+            <option value="unverified_lead">Unverified lead</option>
           </select>
         </Field>
         <button className="primary" type="submit">
@@ -193,7 +194,7 @@ export function IdentifierChip({ identifier: i }: { identifier: Identifier }) {
                   if (!c) return;
                   const next = structuredClone(c);
                   next.identifiers.find((x) => x.id === i.id)!.status =
-                    i.status === "verified" ? "unverified" : "verified";
+                    i.status === "verified" ? "analyst_supplied" : "verified";
                   activity(
                     next,
                     "identifier",
@@ -204,7 +205,7 @@ export function IdentifierChip({ identifier: i }: { identifier: Identifier }) {
                 })
               }
             >
-              Mark {i.status === "verified" ? "unverified" : "verified"}
+              Mark {i.status === "verified" ? "analyst supplied" : "verified"}
             </button>
             <button
               className="danger"

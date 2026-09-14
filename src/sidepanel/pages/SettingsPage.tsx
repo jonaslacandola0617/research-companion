@@ -61,6 +61,97 @@ export function SettingsPage() {
           </select>
         </Field>
       </Section>
+      <Section title="Deep Search defaults" description="Controls plan size and conservative batch execution.">
+        <div className="form-grid">
+          <Field label="Search depth">
+            <select
+              value={state.settings.deepSearch.defaultTaskLimit}
+              onChange={(e) => void run(async () => {
+                await mutate({
+                  type: "settings",
+                  expected: JSON.stringify(state.settings),
+                  settings: {
+                    ...state.settings,
+                    deepSearch: { ...state.settings.deepSearch, defaultTaskLimit: Number(e.target.value) as 12 | 24 | 36 | 48 | 60 },
+                  },
+                });
+                await refresh();
+              })}
+            >
+              <option value={12}>Quick · 12</option>
+              <option value={24}>Focused · 24</option>
+              <option value={36}>Standard · 36</option>
+              <option value={48}>Broad · 48</option>
+              <option value={60}>Extensive · 60</option>
+            </select>
+          </Field>
+          <Field label="Batch size">
+            <select
+              value={state.settings.deepSearch.batchSize}
+              onChange={(e) => void run(async () => {
+                await mutate({
+                  type: "settings",
+                  expected: JSON.stringify(state.settings),
+                  settings: {
+                    ...state.settings,
+                    deepSearch: { ...state.settings.deepSearch, batchSize: Number(e.target.value) as 3 | 5 | 8 | 10 },
+                  },
+                });
+                await refresh();
+              })}
+            >
+              {[3, 5, 8, 10].map((value) => <option key={value} value={value}>{value} tabs</option>)}
+            </select>
+          </Field>
+        </div>
+        <label className="check-label">
+          <input
+            type="checkbox"
+            checked={state.settings.deepSearch.includePublicRecords}
+            onChange={(e) => void run(async () => {
+              await mutate({
+                type: "settings",
+                expected: JSON.stringify(state.settings),
+                settings: {
+                  ...state.settings,
+                  deepSearch: { ...state.settings.deepSearch, includePublicRecords: e.target.checked },
+                },
+              });
+              await refresh();
+            })}
+          />
+          Include public-record sources by default
+        </label>
+        <fieldset>
+          <legend>Preferred search engines</legend>
+          <div className="button-grid">
+            {(["google", "bing", "duckduckgo"] as const).map((engine) => (
+              <label className="check-label" key={engine}>
+                <input
+                  type="checkbox"
+                  checked={state.settings.deepSearch.preferredEngines.includes(engine)}
+                  onChange={(e) => void run(async () => {
+                    const preferredEngines = e.target.checked
+                      ? [...state.settings.deepSearch.preferredEngines, engine]
+                      : state.settings.deepSearch.preferredEngines.filter((item) => item !== engine);
+                    if (!preferredEngines.length) throw Error("Keep at least one search engine enabled.");
+                    await mutate({
+                      type: "settings",
+                      expected: JSON.stringify(state.settings),
+                      settings: {
+                        ...state.settings,
+                        deepSearch: { ...state.settings.deepSearch, preferredEngines },
+                      },
+                    });
+                    await refresh();
+                  })}
+                />
+                {engine === "duckduckgo" ? "DuckDuckGo" : engine[0].toUpperCase() + engine.slice(1)}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      </Section>
       <Section
         title="Case portability"
         description="Export files contain unencrypted case data. Keep backups in a location you control."
@@ -131,6 +222,11 @@ export function SettingsPage() {
                 homepage: "",
                 strategy: "homepage",
                 template: "",
+                interaction: "manual",
+                directTemplate: "",
+                priority: 50,
+                requiresLogin: false,
+                potentiallyBlocked: false,
                 supportedIdentifiers: [...identifierTypes],
                 enabled: true,
                 notes:
@@ -242,8 +338,11 @@ export function SettingsPage() {
               e.preventDefault();
               void run(async () => {
                 validateTemplate(editing.template);
+                validateTemplate(editing.directTemplate);
                 if (editing.strategy === "template" && !editing.template)
                   throw Error("Enter a search URL template.");
+                if (editing.interaction === "direct" && !editing.directTemplate)
+                  throw Error("A direct source needs a search URL template.");
                 if (!editing.supportedIdentifiers.length)
                   throw Error("Select at least one supported identifier type.");
                 const sources = [...state.settings.sources];
@@ -304,6 +403,21 @@ export function SettingsPage() {
                 <option value="template">Search URL template</option>
               </select>
             </Field>
+            <Field label="Deep Search interaction">
+              <select
+                value={editing.interaction}
+                onChange={(e) =>
+                  setEditing({
+                    ...editing,
+                    interaction: e.target.value as ResearchSource["interaction"],
+                  })
+                }
+              >
+                <option value="manual">Open homepage · analyst enters values</option>
+                <option value="search-engine-site-query">Search-engine site discovery</option>
+                <option value="direct">Reliable direct URL template</option>
+              </select>
+            </Field>
             <Field
               label="Search URL template"
               hint={templateVariables.map((v) => `{${v}}`).join(" ")}
@@ -312,10 +426,33 @@ export function SettingsPage() {
                 placeholder="https://example.com/search?q={query}"
                 value={editing.template}
                 onChange={(e) =>
-                  setEditing({ ...editing, template: e.target.value })
+                  setEditing({
+                    ...editing,
+                    template: e.target.value,
+                    directTemplate: e.target.value,
+                  })
                 }
               />
             </Field>
+            <Field label="Planner priority" hint="Lower numbers are scheduled earlier.">
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={editing.priority}
+                onChange={(e) => setEditing({ ...editing, priority: Number(e.target.value) })}
+              />
+            </Field>
+            <div className="button-grid">
+              <label className="check-label">
+                <input type="checkbox" checked={editing.requiresLogin} onChange={(e) => setEditing({ ...editing, requiresLogin: e.target.checked })} />
+                May require login
+              </label>
+              <label className="check-label">
+                <input type="checkbox" checked={editing.potentiallyBlocked} onChange={(e) => setEditing({ ...editing, potentiallyBlocked: e.target.checked })} />
+                May block automation
+              </label>
+            </div>
             <fieldset>
               <legend>Supported identifiers</legend>
               <div className="button-grid">

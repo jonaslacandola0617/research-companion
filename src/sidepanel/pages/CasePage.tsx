@@ -16,9 +16,9 @@ export function CasePage() {
   const [filter, setFilter] = useState("");
   if (!c) return null;
 
-  const checked = Object.values(c.checklist).filter(
-    (s) => s.status !== "not_checked",
-  ).length;
+  const checked = new Set(c.searchHistory.map((entry) => entry.targetSourceId || entry.engineSourceId)).size;
+  const latestRun = c.searchRuns.at(-1);
+  const verified = c.identifiers.filter((identifier) => identifier.status === "verified").length;
   const location = [c.profile.city, c.profile.state, c.profile.country]
     .filter(Boolean)
     .join(", ");
@@ -54,15 +54,26 @@ export function CasePage() {
           <strong>{c.identifiers.length}</strong>
           <span>Identifiers</span>
         </button>
-        <button onClick={() => navigate("FINDINGS")}>
-          <strong>{c.findings.length}</strong>
-          <span>Findings</span>
+        <button onClick={() => navigate("LEADS")}>
+          <strong>{c.leads.length}</strong>
+          <span>Leads</span>
         </button>
-        <button onClick={() => navigate("SEARCH")}>
+        <button onClick={() => navigate("DEEP SEARCH")}>
           <strong>{checked}</strong>
           <span>Sources reviewed</span>
         </button>
       </div>
+
+      <Section title="Deep Search coverage" description={latestRun ? `Last wave ${new Date(latestRun.createdAt).toLocaleString()}` : "No search wave prepared yet."}>
+        <div className="case-search-summary">
+          <span><strong>{c.identifiers.length}</strong> known identifiers</span>
+          <span><strong>{verified}</strong> verified</span>
+          <span><strong>{checked}</strong> sources searched</span>
+        </div>
+        <button className="primary full" onClick={() => navigate("DEEP SEARCH")}>
+          {latestRun ? "Continue Deep Search" : "Start Deep Search"}
+        </button>
+      </Section>
 
       <Section
         title="Subject overview"
@@ -145,7 +156,7 @@ export function CasePage() {
                     city: "city",
                     state: "state",
                     country: "country",
-                    previousLocations: "address",
+                    previousLocations: "previous_location",
                     employers: "employer",
                     schools: "school",
                     relatives: "relative",
@@ -247,6 +258,13 @@ export function CasePage() {
             export.
           </p>
         )}
+      </Section>
+
+      <Section title="Secondary case tools">
+        <div className="button-grid">
+          <button onClick={() => navigate("FINDINGS")}>Open findings notebook</button>
+          <button onClick={() => navigate("REPORT")}>Open case report</button>
+        </div>
       </Section>
 
       <Section title="Case management">

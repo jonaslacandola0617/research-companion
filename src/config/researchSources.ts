@@ -98,6 +98,31 @@ export const defaultSources: ResearchSource[] = categories.flatMap((category) =>
       bing: "https://www.bing.com/search?q={query}",
       duckduckgo: "https://duckduckgo.com/?q={query}",
     };
+    const searchEngineDiscovery = ["1ST SM", "TOP SOCMED", "SUB SOC"].includes(
+      category,
+    );
+    const interaction: ResearchSource["interaction"] = templates[id]
+      ? "direct"
+      : searchEngineDiscovery
+        ? "search-engine-site-query"
+        : "manual";
+    const highPriority = [
+      "google",
+      "bing",
+      "duckduckgo",
+      "facebook",
+      "linkedin",
+      "instagram",
+      "x",
+      "tiktok",
+      "reddit",
+      "youtube",
+      "whitepages",
+      "truepeoplesearch",
+      "idcrawl",
+      "whatsmyname",
+      "epieos",
+    ];
     return {
       id,
       name,
@@ -105,6 +130,21 @@ export const defaultSources: ResearchSource[] = categories.flatMap((category) =>
       homepage: `https://${host}`,
       strategy: templates[id] ? "template" : "homepage",
       template: templates[id] || "",
+      interaction,
+      directTemplate: templates[id] || "",
+      priority: highPriority.includes(id) ? 15 : category === "ARREST" ? 55 : 35,
+      requiresLogin: [
+        "facebook",
+        "linkedin",
+        "instagram",
+        "x",
+        "tiktok",
+        "venmo",
+        "spotify",
+      ].includes(id),
+      potentiallyBlocked:
+        category === "ARREST" ||
+        ["whitepages", "spokeo", "radaris", "intelius", "truthfinder"].includes(id),
       supportedIdentifiers:
         id === "whatsmyname"
           ? ["username"]
@@ -124,6 +164,7 @@ export const defaultSources: ResearchSource[] = categories.flatMap((category) =>
                     "phone",
                     "city",
                     "address",
+                    "previous_location",
                     "employer",
                   ],
       enabled: true,

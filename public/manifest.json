@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Research Companion",
   "version": "1.0.0",
-  "description": "A local-first, analyst-controlled research workspace.",
+  "description": "An analyst-controlled Deep POI Search orchestrator with local cases, leads, and history.",
   "minimum_chrome_version": "116",
   "permissions": [
     "storage",

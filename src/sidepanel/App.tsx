@@ -37,10 +37,12 @@ import { FindingsPage } from "./pages/FindingsPage";
 import { ComparePage } from "./pages/ComparePage";
 import { ReportPage } from "./pages/ReportPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { LeadsPage } from "./pages/LeadsPage";
+import { HistoryPage } from "./pages/HistoryPage";
 import { IdentifierEditor } from "./components/IdentifierEditor";
 import { Empty, Field, Modal } from "./components/ui";
 import { detectIdentifierType } from "../services/queryBuilder";
-const tabs = ["CASE", "SEARCH", "FINDINGS", "COMPARE", "REPORT"];
+const tabs = ["CASE", "DEEP SEARCH", "LEADS", "COMPARE", "HISTORY"];
 export default function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [fatal, setFatal] = useState("");
@@ -145,6 +147,7 @@ export default function App() {
   useEffect(() => {
     if (!draft || !draftMatches) return;
     if (draft.mode === "finding") setPage("FINDINGS");
+    if (draft.mode === "lead") setPage("LEADS");
   }, [draft?.id, draftMatches]);
   useEffect(() => {
     if (state) document.documentElement.dataset.theme = state.settings.theme;
@@ -161,9 +164,9 @@ export default function App() {
   const pivot = (i: Identifier, sourceId?: string) => {
     setPivotValue({ ...i });
     setPivotSource(sourceId);
-    setPage("SEARCH");
+    setPage("DEEP SEARCH");
   };
-  const capture = async (mode: "finding" | "identifier") => {
+  const capture = async (mode: "finding" | "identifier" | "lead") => {
     await request({ kind: "capture", mode, windowId });
   };
   if (fatal)
@@ -193,9 +196,9 @@ export default function App() {
   if (!state) return <div className="empty">Opening your local workspace…</div>;
   const source = recognizeSource(activeTab?.url || "", state.settings.sources);
   const enabled = state.settings.sources.filter((s) => s.enabled);
-  const checked = enabled.filter(
-    (s) => c?.checklist[s.id] && c.checklist[s.id].status !== "not_checked",
-  ).length;
+  const checked = c
+    ? new Set(c.searchHistory.map((entry) => entry.targetSourceId || entry.engineSourceId)).size
+    : 0;
   return (
     <WorkspaceContext.Provider
       value={{
@@ -299,7 +302,7 @@ export default function App() {
               />
             </span>
             <span>
-              {checked}/{enabled.length} sources checked
+              {checked}/{enabled.length} sources searched
             </span>
           </div>
         )}
@@ -381,12 +384,12 @@ export default function App() {
           ) : (
             <React.Fragment key={c.id}>
               {page === "CASE" && <CasePage />}
-              {page === "SEARCH" && (
-                <SearchPage initial={pivotValue} sourceId={pivotSource} />
-              )}{" "}
-              {page === "FINDINGS" && <FindingsPage />}
+              {page === "DEEP SEARCH" && <SearchPage />}{" "}
+              {page === "LEADS" && <LeadsPage />}
               {page === "COMPARE" && <ComparePage />}
+              {page === "HISTORY" && <HistoryPage />}
               {page === "REPORT" && <ReportPage />}
+              {page === "FINDINGS" && <FindingsPage />}
             </React.Fragment>
           )}
           {!c && (
@@ -458,8 +461,9 @@ export default function App() {
                 </button>
               )}
               <button onClick={() => void run(() => capture("finding"))}>
-                Capture
+                Finding
               </button>
+              <button onClick={() => void run(() => capture("lead"))}>Lead</button>
               <button
                 aria-label="Add identifier from current page"
                 onClick={() => void run(() => capture("identifier"))}
@@ -516,7 +520,7 @@ export default function App() {
           close={() => setIdentifier(null)}
         />
       )}{" "}
-      {draft && draftMatches && draft.mode !== "finding" && (
+      {draft && draftMatches && !["finding", "lead"].includes(draft.mode) && (
         <Modal
           title={
             draft.mode === "search"
@@ -549,6 +553,7 @@ export default function App() {
                 );
                 i.source = draft.sourceUrl;
                 i.notes = `Captured from ${draft.pageTitle} at ${draft.capturedAt}`;
+                i.status = "unverified_lead";
                 if (draft.mode === "search") pivot(i, draft.sourceId);
                 else setIdentifier(i);
                 await dismissDraft();

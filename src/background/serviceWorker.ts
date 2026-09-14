@@ -5,7 +5,14 @@ import {
   executeMutation,
 } from "../services/storage";
 import { buildSearchUrl } from "../services/queryBuilder";
-import { identifierSchema, type CaptureDraft } from "../types";
+import {
+  activity,
+  identifierSchema,
+  now,
+  uuid,
+  type CaptureDraft,
+  type DeepSearchTaskStatus,
+} from "../types";
 import {
   track,
   logSearch,
@@ -111,7 +118,15 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         /* Side panel clicks may not grant activeTab; metadata/manual text capture remains available. */
       }
       await saveDraft(
-        makeDraft(message.mode === "identifier" ? "add" : "capture", text, tab),
+        makeDraft(
+          message.mode === "identifier"
+            ? "add"
+            : message.mode === "lead"
+              ? "lead"
+              : "capture",
+          text,
+          tab,
+        ),
       );
       return;
     }
@@ -121,6 +136,122 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (message.kind === "tabs") {
       await tabAction(c, message.action, message.windowId);
       return;
+    }
+    if (message.kind === "update-run") {
+      const run = c.searchRuns.find((item) => item.id === message.runId);
+      if (!run) throw Error("Search run no longer exists.");
+      if (message.action === "pause") run.status = "paused";
+      if (message.action === "continue")
+        run.status = run.tasks.some((task) => task.enabled && task.status === "planned")
+          ? "running"
+          : "completed";
+      if (message.action === "cancel") run.status = "cancelled";
+      run.updatedAt = now();
+      activity(c, "search", `Deep Search ${message.action}d (wave ${run.wave})`);
+      await writeState(state);
+      return run;
+    }
+    if (message.kind === "update-search-task") {
+      const run = c.searchRuns.find((item) => item.id === message.runId);
+      const task = run?.tasks.find((item) => item.id === message.taskId);
+      if (!run || !task) throw Error("Search task no longer exists.");
+      const allowed: DeepSearchTaskStatus[] = [
+        "reviewed",
+        "useful_lead",
+        "no_useful_result",
+        "unavailable",
+        "blocked",
+        "skipped",
+      ];
+      if (!allowed.includes(message.status)) throw Error("Unsupported task status.");
+      task.status = message.status;
+      task.reviewedAt = now();
+      const event = c.searchHistory.find(
+        (item) => item.searchRunId === run.id && item.taskId === task.id,
+      );
+      if (event) event.status = message.status;
+      run.opened = run.tasks.filter((item) => item.status === "opened").length;
+      run.skipped = run.tasks.filter((item) => item.status === "skipped").length;
+      run.completed = run.tasks.filter((item) =>
+        ["reviewed", "useful_lead", "no_useful_result", "unavailable", "blocked"].includes(
+          item.status,
+        ),
+      ).length;
+      if (message.status === "blocked") run.status = "paused";
+      else if (!run.tasks.some((item) => item.enabled && item.status === "planned"))
+        run.status = "completed";
+      run.updatedAt = now();
+      await writeState(state);
+      return task;
+    }
+    if (message.kind === "run-search-batch") {
+      const run = c.searchRuns.find((item) => item.id === message.runId);
+      if (!run) throw Error("Search run no longer exists.");
+      if (["paused", "cancelled", "completed"].includes(run.status))
+        throw Error(`This search run is ${run.status}.`);
+      const batchSize = state.settings.deepSearch.batchSize;
+      const tasks = run.tasks
+        .filter((task) => task.enabled && task.status === "planned")
+        .slice(0, batchSize);
+      if (!tasks.length) throw Error("No planned searches remain in this run.");
+      run.status = "running";
+      const errors: string[] = [];
+      let opened = 0;
+      for (const task of tasks) {
+        try {
+          const tab = await chrome.tabs.create({
+            url: task.url,
+            active: false,
+            windowId: message.windowId,
+          });
+          task.status = "opened";
+          task.openedAt = now();
+          opened++;
+          try {
+            await track(c, tab, task.id);
+          } catch {
+            errors.push(
+              `${task.targetSourceName || task.engineSourceId}: tab opened, but grouping failed.`,
+            );
+          }
+          const sourceId = task.targetSourceId || task.engineSourceId;
+          const sourceName = task.targetSourceName || task.engineSourceId;
+          logSearch(c, sourceId, sourceName, task.query, task.url);
+          c.searchHistory.push({
+            id: uuid(),
+            searchRunId: run.id,
+            taskId: task.id,
+            query: task.query,
+            normalizedQuery: task.normalizedQuery,
+            engineSourceId: task.engineSourceId,
+            targetSourceId: task.targetSourceId,
+            identifierIds: task.identifierIds,
+            url: task.url,
+            timestamp: task.openedAt,
+            status: "opened",
+          });
+        } catch {
+          task.status = "unavailable";
+          task.reviewedAt = now();
+          errors.push(`${task.targetSourceName || task.engineSourceId}: unable to open.`);
+        }
+      }
+      run.currentTaskIndex = Math.max(
+        0,
+        run.tasks.findIndex((task) => task.enabled && task.status === "planned"),
+      );
+      run.opened = run.tasks.filter((task) => task.status === "opened").length;
+      run.skipped = run.tasks.filter((task) => task.status === "skipped").length;
+      run.completed = run.tasks.filter((task) =>
+        ["reviewed", "useful_lead", "no_useful_result", "unavailable", "blocked"].includes(
+          task.status,
+        ),
+      ).length;
+      if (!run.tasks.some((task) => task.enabled && task.status === "planned"))
+        run.status = "completed";
+      run.updatedAt = now();
+      await writeState(state);
+      return { opened, errors, status: run.status };
     }
     if (message.kind === "launch") {
       const identifier = identifierSchema.parse(message.identifier);

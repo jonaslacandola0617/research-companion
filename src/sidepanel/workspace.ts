@@ -15,7 +15,7 @@ export type Workspace = {
   navigate: (page: string) => void;
   editIdentifier: (i?: Identifier) => void;
   pivot: (i: Identifier, sourceId?: string) => void;
-  capture: (mode: "finding" | "identifier") => Promise<void>;
+  capture: (mode: "finding" | "identifier" | "lead") => Promise<void>;
   draft: CaptureDraft | null;
   dismissDraft: () => Promise<void>;
   windowId?: number;

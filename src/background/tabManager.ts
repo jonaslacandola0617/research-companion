@@ -1,5 +1,5 @@
 import { activity, now, uuid, type ResearchCase } from "../types";
-type Tabs = { caseId: string; tabId: number; windowId: number };
+type Tabs = { caseId: string; tabId: number; windowId: number; taskId?: string };
 const key = "ownedResearchTabs";
 async function owned(): Promise<Tabs[]> {
   return (await chrome.storage.session.get(key))[key] || [];
@@ -7,10 +7,10 @@ async function owned(): Promise<Tabs[]> {
 async function save(tabs: Tabs[]) {
   await chrome.storage.session.set({ [key]: tabs });
 }
-export async function track(c: ResearchCase, tab: chrome.tabs.Tab) {
+export async function track(c: ResearchCase, tab: chrome.tabs.Tab, taskId?: string) {
   if (tab.id == null) throw Error("Unable to identify the research tab.");
   const records = (await owned()).filter((r) => r.tabId !== tab.id);
-  records.push({ caseId: c.id, tabId: tab.id, windowId: tab.windowId });
+  records.push({ caseId: c.id, tabId: tab.id, windowId: tab.windowId, taskId });
   await save(records);
   const peers = await liveTabs(c.id);
   const sameWindow = peers.filter((t) => t.windowId === tab.windowId);
@@ -30,7 +30,7 @@ export async function track(c: ResearchCase, tab: chrome.tabs.Tab) {
       : { tabIds: [tab.id], groupId },
   );
   await chrome.tabGroups.update(group, {
-    title: `CASE — ${c.subjectName}`.slice(0, 100),
+    title: `POI: ${c.subjectName}`.slice(0, 100),
     color: "cyan",
   });
 }
@@ -73,10 +73,27 @@ export async function tabAction(
     return;
   }
   const tabs = await liveTabs(c.id);
-  const ids = tabs.flatMap((t) => (t.id == null ? [] : [t.id]));
+  let ids = tabs.flatMap((t) => (t.id == null ? [] : [t.id]));
+  if (action === "close-completed") {
+    const complete = new Set(
+      c.searchRuns.flatMap((run) =>
+        run.tasks
+          .filter((task) =>
+            ["reviewed", "useful_lead", "no_useful_result", "unavailable", "blocked", "skipped"].includes(
+              task.status,
+            ),
+          )
+          .map((task) => task.id),
+      ),
+    );
+    const records = await owned();
+    ids = records
+      .filter((record) => record.caseId === c.id && record.taskId && complete.has(record.taskId))
+      .map((record) => record.tabId);
+  }
   if (!ids.length)
     throw Error("No tracked research tabs in this browser session.");
-  if (action === "close") {
+  if (action === "close" || action === "close-completed") {
     const failed: number[] = [];
     for (const id of ids) {
       try {
